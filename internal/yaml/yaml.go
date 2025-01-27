@@ -187,6 +187,9 @@ func updateNode(node *yaml.Node, value reflect.Value) error {
 		if !value.IsNil() {
 			return updateNode(node, value.Elem())
 		}
+		node.Kind = yaml.ScalarNode
+		node.Tag = "!!null"
+		node.Value = ""
 	case reflect.Struct:
 		if err := updateYamlFromStruct(node, value.Interface()); err != nil {
 			return err
@@ -215,12 +218,19 @@ func updateNode(node *yaml.Node, value reflect.Value) error {
 			node.Tag = "!!str"
 			node.Value = value.String()
 		default:
+			// For any other type, convert to string
 			node.Tag = "!!str"
 			node.Value = fmt.Sprintf("%v", value.Interface())
 		}
 	}
 
-	node.Style = originalStyle
+	// Don't quote numbers and booleans
+	if node.Tag == "!!int" || node.Tag == "!!float" || node.Tag == "!!bool" {
+		node.Style = 0
+	} else {
+		node.Style = originalStyle
+	}
+
 	node.Column = originalColumn
 	return nil
 }
