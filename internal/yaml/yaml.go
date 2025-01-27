@@ -67,10 +67,6 @@ func updateYamlFromStruct(node *yaml.Node, data interface{}) error {
 		val = val.Elem()
 	}
 
-	if val.Kind() != reflect.Struct {
-		return fmt.Errorf("data must be a struct or pointer to struct")
-	}
-
 	mappingNode := node
 	if node.Kind == yaml.DocumentNode {
 		if len(node.Content) != 1 {
@@ -91,11 +87,45 @@ func updateYamlFromStruct(node *yaml.Node, data interface{}) error {
 		mappingNode.Content = []*yaml.Node{}
 	}
 
-	typ := val.Type()
-	for i := 0; i < val.NumField(); i++ {
-		if err := updateField(mappingNode, typ.Field(i), val.Field(i)); err != nil {
-			return fmt.Errorf("failed to update field %s: %w", typ.Field(i).Name, err)
+	switch val.Kind() {
+	case reflect.Struct:
+		typ := val.Type()
+		for i := 0; i < val.NumField(); i++ {
+			if err := updateField(mappingNode, typ.Field(i), val.Field(i)); err != nil {
+				return fmt.Errorf("failed to update field %s: %w", typ.Field(i).Name, err)
+			}
 		}
+	case reflect.Map:
+		if val.Type().Key().Kind() != reflect.String {
+			return fmt.Errorf("map key must be string")
+		}
+		for _, key := range val.MapKeys() {
+			keyStr := key.String()
+			keyNode, valueNode, found := findNodes(mappingNode, keyStr)
+			if !found {
+				keyNode = &yaml.Node{
+					Kind:  yaml.ScalarNode,
+					Tag:   "!!str",
+					Value: keyStr,
+				}
+				valueNode = &yaml.Node{}
+				if len(mappingNode.Content) > 0 {
+					keyNode.Style = mappingNode.Content[0].Style
+					keyNode.Column = mappingNode.Content[0].Column
+					valueNode.Style = mappingNode.Content[1].Style
+					valueNode.Column = mappingNode.Content[1].Column
+				} else {
+					keyNode.Column = mappingNode.Column + 2
+					valueNode.Column = mappingNode.Column + 2
+				}
+				mappingNode.Content = append(mappingNode.Content, keyNode, valueNode)
+			}
+			if err := updateNode(valueNode, val.MapIndex(key)); err != nil {
+				return fmt.Errorf("failed to update map value for key %s: %w", keyStr, err)
+			}
+		}
+	default:
+		return fmt.Errorf("data must be a struct, pointer to struct, or map[string]interface{}")
 	}
 
 	return nil
@@ -153,6 +183,10 @@ func updateNode(node *yaml.Node, value reflect.Value) error {
 	originalColumn := node.Column
 
 	switch value.Kind() {
+	case reflect.Interface:
+		if !value.IsNil() {
+			return updateNode(node, value.Elem())
+		}
 	case reflect.Struct:
 		if err := updateYamlFromStruct(node, value.Interface()); err != nil {
 			return err
@@ -170,14 +204,20 @@ func updateNode(node *yaml.Node, value reflect.Value) error {
 		switch value.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			node.Tag = "!!int"
+			node.Value = fmt.Sprintf("%d", value.Int())
 		case reflect.Float32, reflect.Float64:
 			node.Tag = "!!float"
+			node.Value = fmt.Sprintf("%g", value.Float())
 		case reflect.Bool:
 			node.Tag = "!!bool"
+			node.Value = fmt.Sprintf("%v", value.Bool())
+		case reflect.String:
+			node.Tag = "!!str"
+			node.Value = value.String()
 		default:
 			node.Tag = "!!str"
+			node.Value = fmt.Sprintf("%v", value.Interface())
 		}
-		node.Value = fmt.Sprintf("%v", value.Interface())
 	}
 
 	node.Style = originalStyle

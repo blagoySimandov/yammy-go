@@ -30,3 +30,7 @@ education:
       courses:
         CS101: [A, B+, A]
         CS102: [B+, A]
+interests:
+  - photography
+  - cooking
+  - travel
